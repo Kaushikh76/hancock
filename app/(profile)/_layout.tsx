@@ -1,66 +1,79 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, TouchableOpacity, ToastAndroid, Platform, Alert } from 'react-native';
-import { useLoginWithEmail, usePrivy, hasError } from '@privy-io/expo';
+import { useLoginWithEmail, usePrivy, hasError, useEmbeddedWallet } from '@privy-io/expo';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// Override atob
+const _atob = atob;
+global.atob = (val) => {
+  try {
+    return _atob(val);
+  } catch {
+    return _atob(val + "=");
+  }
+};
+
 const LoginScreen = () => {
   const { isReady } = usePrivy();
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(''.padEnd(6, '')); // Initialize as a 6-character string
   const [email, setEmail] = useState('');
   const [isOtpEnabled, setIsOtpEnabled] = useState(false);
 
   const { state, sendCode, loginWithCode } = useLoginWithEmail();
   const inputRefs = useRef<(TextInput | null)[]>(Array(6).fill(null));
-
   const { user } = usePrivy();
-
   const wallet = useEmbeddedWallet();
-
   const [userInfo, setUserInfo] = useState('');
 
   useEffect(() => {
     fetchData();
-    console.log("userinnnfo", userInfo);
   }, []);
 
   const fetchData = async () => {
-    let userInfo = await AsyncStorage.getItem('userinfo');
-    console.log("type", typeof(userInfo));
-    console.log("userinfo", userInfo);
-    console.log("Hi");
-    setUserInfo(userInfo);
+    try {
+      const userInfo = await AsyncStorage.getItem('userinfo');
+      if (userInfo) {
+        setUserInfo(userInfo);
+      }
+    } catch (error) {
+      console.error('Error fetching user info:', error);
+    }
   };
 
-  const handleCodeChange = (index: number, text: string) => {
-    const updatedCode = code.slice(0, index) + text + code.slice(index + 1);
-    setCode(updatedCode);
+  const handleCodeChange = (index, text) => {
+    const updatedCodeArray = [...code];
+    updatedCodeArray[index] = text;
+    setCode(updatedCodeArray.join(''));
 
     if (text.length === 1 && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
 
-    if (updatedCode.length === 6) {
-      loginWithCode({ code: updatedCode, email: email }).then(() => {
-        console.log("user is", user);
+    if (updatedCodeArray.join('').length === 6) {
+        console.log("updated:",updatedCodeArray.join(''));
+      loginWithCode({ code: updatedCodeArray.join(''), email }).then(() => {
         showSuccessToast();
-        try {
-          console.log("walet create aacha ?");
-          let password = 'password';
-          wallet.create({
-            recoveryMethod: 'user-passcode',
-            password,
-          });
-          console.log("wall", wallet);
-        } catch (error) {
-          console.error('Error during wallet creation:', error);
-        } finally {
-          setTimeout(() => {
-            router.push('/(tabs)');
-          }, 1000);
-        }
+        handleWalletCreation();
       });
+    }
+  };
+
+  const handleWalletCreation = async () => {
+    try {
+      const password = 'password';
+      await wallet.create({
+        recoveryMethod: 'user-passcode',
+        password,
+      });
+      console.log('Wallet created:', wallet);
+    } catch (error) {
+      console.error('Error during wallet creation:', error);
+    } finally {
+      setTimeout(() => {
+        router.push('/(tabs)');
+      }, 1000);
     }
   };
 
@@ -68,18 +81,17 @@ const LoginScreen = () => {
     if (Platform.OS === 'android') {
       ToastAndroid.show("Login Successful!", ToastAndroid.SHORT);
     } else {
-      // For iOS or any other platform, use a compatible toast library
+      Alert.alert('Login Successful!');
     }
   };
 
   const handleSendCode = async () => {
     try {
-      let result = await sendCode({ email });
-      console.log(result);
-      if (result.success == false && hasError(state)) {
-        console.log(state.error.message);
+      const result = await sendCode({ email });
+      if (!result.success && hasError(state)) {
+        console.error(state.error.message);
       }
-      if (result.success == true) {
+      if (result.success) {
         setIsOtpEnabled(true);
       }
     } catch (error) {
@@ -92,7 +104,7 @@ const LoginScreen = () => {
     <View style={styles.container}>
       <Text style={styles.title}>Sign into!</Text>
 
-      {state.status != 'sending-code' &&
+      {state.status !== 'sending-code' &&
         <View style={styles.card}>
           <TextInput
             style={[styles.input, styles.emailInput]}
@@ -110,14 +122,11 @@ const LoginScreen = () => {
               <TextInput
                 key={index}
                 ref={(ref) => (inputRefs.current[index] = ref)}
-                style={[styles.otpInput, isOtpEnabled ? null : styles.disabledInput]}
+                style={[styles.otpInput]}
                 onChangeText={(text) => handleCodeChange(index, text)}
                 maxLength={1}
                 keyboardType="numeric"
                 textAlign="center"
-                editable={isOtpEnabled}
-                placeholder="•"
-                placeholderTextColor="#ccc"
               />
             ))}
         </View>}
@@ -167,7 +176,7 @@ const styles = StyleSheet.create({
   emailInput: {
     width: '100%',
     borderWidth: 2,
-    borderColor: 'black'
+    borderColor: 'black',
   },
   button: {
     backgroundColor: '#0000002C',
@@ -204,10 +213,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#333',
     fontWeight: 'bold',
-  },
-  disabledInput: {
-    backgroundColor: '#e0e0e0',
-    color: '#a0a0a0',
   },
   statusText: {
     marginTop: 10,
