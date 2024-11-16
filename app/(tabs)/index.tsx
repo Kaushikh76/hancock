@@ -3,8 +3,16 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SvgUri } from 'react-native-svg';
 import AnimatedSpeedometer from '../../components/AnimatedSpeedometer';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { usePrivy } from '@privy-io/expo';
 
 const ProfileScreen = () => {
+
+  const {user}=usePrivy();
+
+  if(user!=null){
+  console.log(user);
+  }
+
   return (
     <SafeAreaView style={styles.profileComponent}>
           <Text style={{ fontSize: 30, fontWeight: 'bold', marginBottom: 20 }}>Profile</Text>
