@@ -1,14 +1,35 @@
+import { Buffer } from 'buffer';
+import { Text as TextDecoder, TextEncoder } from 'text-encoding';
+
+// Polyfill necessary globals
+if (typeof global.TextDecoder === 'undefined') {
+  global.TextDecoder = TextDecoder;
+  global.TextEncoder = TextEncoder;
+}
+if (typeof global.Buffer === 'undefined') {
+  global.Buffer = Buffer;
+}
+
+
+
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Animated, TextInput, Easing, Image, Alert } from 'react-native';
 import { Formik } from 'formik';
 import { Button, CheckBox } from 'react-native-elements';
 import Slider from '@react-native-community/slider';
 import RNPickerSelect from 'react-native-picker-select';
-import pickerSelectStyles from 'react-native-picker-select';
+import pickerSelectStyles from 'react-native-picker-select'
+import { ethers } from 'ethers';
+import { CONTRACT_ADDRESS, ABI, SAPPHIRE_TESTNET } from './configmatch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { wrap } from '@oasisprotocol/sapphire-paratime';
+
 import { router } from 'expo-router';
 import { TouchableOpacity } from 'react-native';
+import { ChevronLeft, SendToBackIcon } from 'lucide-react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+
+
 
 const questions = [
   { id: 'name', type: 'text', question: "What's your superhero alias?", placeholder: "Enter your secret identity..." },
@@ -20,40 +41,264 @@ const questions = [
   { id: 'preferlips', type: 'slider', question: 'Rate the lips: Are we talking pout perfection or just a cute smile?', min: 1, max: 10 },
   { id: 'preferjawline', type: 'slider', question: 'How jaw-dropping is that jawline? Rate it!', min: 1, max: 10 },
   { id: 'preferskin', type: 'radio', question: 'What skin tone makes your heart race?', options: ['Milk White', 'Hot Brownie', 'Dark Chocolate', 'Poisonous Peach'] },
+  { id: 'walletkey', type: 'text', question: "Sign up ?", placeholder: "Enter your secret private key... Everything is open source ;)" },
 ];
 
+
+
 const countries = [
-  { label: 'United States', value: 'US' },
-  { label: 'Canada', value: 'CA' },
-  { label: 'United Kingdom', value: 'UK' },
-  { label: 'Australia', value: 'AU' },
-  { label: 'Germany', value: 'DE' },
-  { label: 'France', value: 'FR' },
-  { label: 'Japan', value: 'JP' },
-  { label: 'Brazil', value: 'BR' },
-  { label: 'India', value: 'IN' },
-  { label: 'China', value: 'CN' },
-];
+    { label: 'United States', value: 'US' },
+    { label: 'Canada', value: 'CA' },
+    { label: 'United Kingdom', value: 'UK' },
+    { label: 'Australia', value: 'AU' },
+    { label: 'Germany', value: 'DE' },
+    { label: 'France', value: 'FR' },
+    { label: 'Japan', value: 'JP' },
+    { label: 'Brazil', value: 'BR' },
+    { label: 'India', value: 'IN' },
+    { label: 'China', value: 'CN' },
+  ];
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 const TypeformClone = () => {
-  const [username, setUsername] = useState('');
-  const [personalInfo, setPersonalInfo] = useState({
-    name: '',
-    age: '',
-    bio: '',
-  });
-  const [interests, setInterests] = useState(['']);
-  const [profileData, setProfileData] = useState(null);
-  const [matches, setMatches] = useState([]);
-  const [targetUsername, setTargetUsername] = useState('');
+
+ // ethers stuff
+
+    const [provider, setProvider] = useState(null);
+    const [contract, setContract] = useState(null);
+    const [wallet, setWallet] = useState(null);
+    const [username, setUsername] = useState('');
+    const [personalInfo, setPersonalInfo] = useState({
+      name: '',
+      age: '',
+      bio: '',
+    });
+    const [interests, setInterests] = useState(['']);
+    const [profileData, setProfileData] = useState(null);
+    const [matches, setMatches] = useState([]);
+    const [targetUsername, setTargetUsername] = useState('');
+    const [isInitialized, setIsInitialized] = useState(false);
+  
+    
+    useEffect(() => {
+
+        const checkWalletKey = async () => {
+          const priv = await AsyncStorage.getItem('wallet_private_key');
+          if (priv != null) {
+            router.push('/(tabs)');
+          }
+        };
+        checkWalletKey();
+      
+    },[])
+
+    useEffect(() => { initializeEthers(); }, []);
+    const initializeEthers = async () => {
+      try {
+        // Create a provider and wrap it with Sapphire
+        const baseProvider = new ethers.JsonRpcProvider(SAPPHIRE_TESTNET.networkParams.rpcUrls[0]);
+        const wrappedProvider = wrap(baseProvider);
+        setProvider(wrappedProvider);
+        
+        const userInfoJson = await AsyncStorage.getItem('userinfo')
+        await AsyncStorage.setItem('wallet_private_key', JSON.parse(userInfoJson).walletkey);
+        const privateKey = await AsyncStorage.getItem('wallet_private_key');
+        
+        if (!privateKey) {
+          Alert.alert('Wallet Setup Required', 'Please set up your wallet first by importing your private key');
+          return;
+        }
+  
+        // Create a wrapped wallet for Sapphire
+        const baseWallet = new ethers.Wallet(privateKey, wrappedProvider);
+        console.log('Based address:', baseWallet);
+        const wrappedWallet = wrap(baseWallet);
+        console.log('Wrapped address:', wrappedWallet);
+        setWallet(wrappedWallet);
+  
+        // Initialize contract with wrapped wallet
+        const wrappedContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wrappedWallet);
+        setContract(wrappedContract);
+        setIsInitialized(true);
+
+      } catch (error) {
+        Alert.alert('Error', 'Failed to initialize blockchain connection: ' + error.message);
+        console.error('Initialization error:', error);
+      }
+    };
+  
+    // Function to encrypt sensitive data using Sapphire's built-in encryption
+
+  
+    const createProfile = async () => {
+      let userInfoJson = await AsyncStorage.getItem('userinfo');
+      let userInfo = JSON.parse(userInfoJson);
+        if (!userInfo) {
+          console.log('Error', 'Please wait for wallet initialization');
+          
+        }
+    
+        try {
+          if (!userInfo) {
+            console.log('Error', 'Wallet or contract not initialized');
+
+          }
+    
+          // Validate fields
+          if (!userInfo.name.trim()) {
+            console.log('Error', 'Username is required');
+        
+          }
+    
+          if (!userInfo.name.trim() || !userInfo.age || !userInfo.Bio.trim()) {
+            console.log('Error', 'All profile fields are required');
+    
+          }
+    
+    
+          // Check if username is already taken
+          const isTaken = await contract.isUsernameTaken(userInfo.name);
+          if (isTaken) {
+            console.log('Error', 'Username is already taken');
+          }
+
+          console.log('Confirming', 'Creating confidential profile... Please wait.');
+          console.log("After this is the error");
+          // Call contract function
+               const tx = await contract.createProfile(
+            JSON.parse(userInfoJson).name,
+            {
+          name: JSON.parse(userInfoJson)['name'],
+          age: JSON.parse(userInfoJson)['age'],
+          bio: JSON.parse(userInfoJson)['Bio'],
+        },
+            ["encryptedInterests", "Flutter"],
+            { gasLimit: 500000 }
+          );
+          await tx.wait();
+          console.log('Profile created successfully!', tx);
+          router.push('/(kyc)/');
+          // Reset fields after successful profile creation
+          setPersonalInfo({ name: '', age: '', bio: '' });
+          setInterests(['']);
+          setUsername('');
+        } catch (error) {
+          Alert.alert('Error', 'Failed to create confidential profile: ' + (error.reason || error.message));
+          console.error('Profile creation error:', error);
+        }
+      };
+  
+    // const getProfile = async () => {
+    //   if (!isInitialized) {
+    //     Alert.alert('Error', 'Please wait for wallet initialization');
+        
+    //   }
+  
+    //   try {
+    //     if (!contract || !username.trim()) {
+    //       Alert.alert('Error', 'Please enter a username');
+    //       return;
+    //     }
+  
+    //     const profile = await contract.getPublicProfileInfo(username);
+        
+    //     if (!profile.exists) {
+    //       Alert.alert('Error', 'Profile does not exist');
+    //       setProfileData(null);
+    //       return;
+    //     }
+
+    //     console.log("no ah",profile);
+  
+    //     // Decrypt profile data
+    //     const decryptedProfile = {
+    //       personalInfo: await decryptData(profile.personalInfo),
+    //       interests: await decryptData(profile.interests),
+    //       beautyMetric: profile.beautyMetric.toString(),
+    //       wealthMetric: profile.wealthMetric.toString()
+    //     };
+  
+    //     setProfileData(decryptedProfile);
+    //   } catch (error) {
+    //     Alert.alert('Error', 'Failed to fetch profile: ' + (error.reason || error.message));
+    //     console.error('Profile fetch error:', error);
+    //   }
+    // };
+
+    // const getMatches = async () => {
+    //   let userInfo = await AsyncStorage.getItem('userinfo');
+    //   let userInfoJSON = JSON.parse(userInfo)
+    //   console.log("User info: here ", userInfoJSON);
+
+    //   if (!isInitialized) {
+    //     Alert.alert('Error', 'Please wait for wallet initialization');
+    //     return;
+    //   }
+  
+    //   try {
+    //     if (!contract || !wallet) {
+    //       Alert.alert('Error', 'Wallet or contract not initialized');
+    //       return;
+    //     }
+
+
+  
+    //     // Validate fields
+    //     if (!userInfoJSON.name) {
+    //       console.error('Error', 'Username is required');
+    //       return;
+    //     }
+  
+    //     // Encrypt data
+      
+  
+        
+    //     // Call contract function
+
+    //     const tx1 = await contract.getTotalProfiles();
+    //     console.log("numbers",tx1)
+    //     console.log(tx1.toString().split(' ')[0]);
+    //   //  await tx1.wait();
+
+
+    //     const tx = await contract.getActiveProfiles(0,tx1.toString().split(' ')[0]);
+    //     console.log("Profiles: ", tx);
+    //   //  await tx.wait();
+    //     console.log('Profiles obtained successfully!', tx);
+
+
+
+    //     const tx2=await contract.isMatch('0x9629d2b146F44b124B0794649DDf69662B7a306D','0xc380c0cE9c8d317c35d64765E39E74524ea8f1aa')
+    //     console.log("Is they a match: ",tx2);
+
+
+    //     const tx3 = await contract.revealPersonalInfo('0xc380c0cE9c8d317c35d64765E39E74524ea8f1aa');
+    //     console.log("Match",tx3);
+
+    //     const tx4 = await contract.getPersonalInfo('JB');
+    //     console.log("Data:", tx4);
+        
+    //     // Alert.alert('Success', 'Confidential profile created successfully!');
+    //     // Reset fields after successful profile creation
+    //     setPersonalInfo({ name: '', age: '', bio: '' });
+    //     setInterests(['']);
+    //     setUsername('');
+    //   } catch (error) {
+    //     console.error('Error', 'Failed to create confidential profile: ' + (error.reason || error.message));
+    //     console.error('Profile creation error:', error);
+    //   }
+
+    // }
+
+
 
   const totalQuestions = 10; // Set this to your actual total number
   const [answeredQuestions, setAnsweredQuestions] = useState(0);
 
   // Calculate progress percentage
   const progress = (answeredQuestions / totalQuestions) * 100;
+
 
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -91,6 +336,8 @@ const TypeformClone = () => {
     });
   };
 
+  
+
   const renderQuestion = (question, formikProps) => {
     switch (question.type) {
       case 'text':
@@ -103,75 +350,92 @@ const TypeformClone = () => {
               value={formikProps.values[question.id]}
               placeholder={question.placeholder}
               placeholderTextColor="#000000FF"
+
             />
             <TouchableOpacity
               onPress={() => {
-                if (formikProps.values[question.id]) {
-                  animateTransition('next');
-                }
-                setAnsweredQuestions(prev => prev + 1);
+          if (formikProps.values[question.id]) {
+            animateTransition('next');
+          }
+          setAnsweredQuestions(prev => prev + 1);
+
               }}
               style={styles.button}
             >
               <View style={styles.btnleft}>
-                <Text style={styles.text}>Next</Text>
-                <Ionicons name={'arrow-forward-outline'} size={25} />
-              </View>
-            </TouchableOpacity>
+            <Text style={styles.text}>Next</Text>
+            <Ionicons
+            name={'arrow-forward-outline'}
+            size={25}
+            
+          />
+            </View>
+         </TouchableOpacity>
           </View>
         );
-      case 'alert':
-        return (
-          <View>
-            <Text style={styles.question}>{question.question}</Text>
-            <TouchableOpacity
-              onPress={() => {
-                animateTransition('next');
-                setAnsweredQuestions(answeredQuestions + 1);
-              }}
-              style={styles.button}
-            >
-              <View style={styles.btnleft}>
+        case 'alert':
+            return (
+              <View>
+                <Text style={styles.question}>{question.question}</Text>
+                
+                <TouchableOpacity
+                  
+                  onPress={() => {
+                      animateTransition('next');      
+                      setAnsweredQuestions(answeredQuestions + 1);
+      
+                  }}
+                  style={styles.button}
+                ><View style={styles.btnleft}>
                 <Text style={styles.text}>Let me Prefer!</Text>
-                <Ionicons name={'arrow-forward-outline'} size={25} />
+                <Ionicons
+                name={'arrow-forward-outline'}
+                size={25}
+                
+              />
+                </View></TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          </View>
-        );
-      case 'slider':
-        return (
-          <View>
-            <Text style={styles.question}>{question.question}</Text>
-            <Slider
-              value={formikProps.values[question.id] ?? question.min}
-              onValueChange={(value) => formikProps.setFieldValue(question.id, value)}
-              minimumValue={question.min}
-              maximumValue={question.max}
-              step={1}
-              style={styles.slider}
-              minimumTrackTintColor="#FFDA37FF"
-              maximumTrackTintColor="#000000"
-              thumbImage={require('../assets/images/thum.png')}
-            />
-            <Text style={styles.sliderValue}>
-              {formikProps.values[question.id] ?? question.min}
-            </Text>
-            <TouchableOpacity
+            );
+            case 'slider':
+                return (
+                  <View>
+                    <Text style={styles.question}>{question.question}</Text>
+                    <Slider
+                      value={formikProps.values[question.id] ?? question.min}
+                      onValueChange={(value) => formikProps.setFieldValue(question.id, value)}
+                      minimumValue={question.min}
+                      maximumValue={question.max}
+                      step={1}
+                      style={styles.slider}
+                      minimumTrackTintColor="#FFDA37FF"
+                      maximumTrackTintColor="#000000"
+                      thumbImage={require('../assets/images/thum.png')}
+                      
+                    />
+                    <Text style={styles.sliderValue}>
+                      {formikProps.values[question.id] ?? question.min}
+                    </Text>
+                    <TouchableOpacity
               onPress={() => {
-                if (formikProps.values[question.id]) {
-                  animateTransition('next');
-                }
-                setAnsweredQuestions(answeredQuestions + 1);
+          if (formikProps.values[question.id]) {
+            animateTransition('next');
+          }
+          setAnsweredQuestions(answeredQuestions + 1);
+
               }}
               style={styles.button}
             >
-              <View style={styles.btnleft}>
-                <Text style={styles.text}>Next</Text>
-                <Ionicons name={'arrow-forward-outline'} size={25} />
-              </View>
-            </TouchableOpacity>
-          </View>
-        );
+                          <View style={styles.btnleft}>
+            <Text style={styles.text}>Next</Text>
+            <Ionicons
+            name={'arrow-forward-outline'}
+            size={25}
+            
+          />
+            </View>
+         </TouchableOpacity>
+                  </View>
+                );
       case 'checkbox':
         return (
           <View>
@@ -188,100 +452,107 @@ const TypeformClone = () => {
               onPress={() => formikProps.setFieldValue(question.id, !formikProps.values[question.id])}
               containerStyle={styles.checkboxContainer}
             />
-            <TouchableOpacity
-              onPress={() => {
-                animateTransition('next');
+            <TouchableOpacity  onPress={() => {animateTransition('next')  
                 setAnsweredQuestions(answeredQuestions + 1);
-              }}
-              style={styles.buttoncheck}
-            >
-              <View style={styles.btnleft}>
-                <Text style={styles.text}>Next</Text>
-                <Ionicons style={styles.icon} name={'arrow-forward-outline'} size={25} />
-              </View>
-            </TouchableOpacity>
+}
+              
+            } style={styles.buttoncheck} >              <View style={styles.btnleft}>
+            <Text style={styles.text}>Next</Text>
+            <Ionicons
+            style={styles.icon}
+            name={'arrow-forward-outline'}
+            size={25}
+            
+          />
+            </View></TouchableOpacity>
           </View>
         );
-      case 'radio':
-        return (
-          <View>
-            <Text style={styles.question}>{question.question}</Text>
-            {question.options.map((option, index) => (
-              <CheckBox
-                key={`${question.id}-${index}`} // Ensure unique key
-                title={option}
-                checked={formikProps.values[question.id] === option}
-                onPress={() => formikProps.setFieldValue(question.id, option)}
-                containerStyle={styles.checkboxContainer}
-              />
-            ))}
-            <TouchableOpacity
-              onPress={() => {
-                animateTransition('next');
-                setAnsweredQuestions(answeredQuestions + 1);
-              }}
-              style={styles.button}
-            >
-              <View style={styles.btnleft}>
-                <Text style={styles.text}>Next</Text>
-                <Ionicons name={'arrow-forward-outline'} size={25} />
-              </View>
-            </TouchableOpacity>
-          </View>
-        );
-      case 'dropdown':
+        case 'radio':
+  return (
+    <View>
+      <Text style={styles.question}>{question.question}</Text>
+      {question.options.map((option, index) => (
+        <CheckBox
+          key={`${question.id}-${index}`} // Ensure unique key
+          title={option}
+          checked={formikProps.values[question.id] === option}
+          onPress={() => formikProps.setFieldValue(question.id, option)}
+          containerStyle={styles.checkboxContainer}
+        />
+      ))}
+      <TouchableOpacity
+        onPress={() => {
+          animateTransition('next');
+          setAnsweredQuestions(answeredQuestions + 1);
+        }}
+        style={styles.button}
+      >
+        <View style={styles.btnleft}>
+          <Text style={styles.text}>Next</Text>
+          <Ionicons name={'arrow-forward-outline'} size={25} />
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
+
+        case 'dropdown':
         return (
           <View>
             <Text style={styles.question}>{question.question}</Text>
             <View style={styles.dropdownContainer}>
               <RNPickerSelect
-                onValueChange={(value) => formikProps.setFieldValue(question.id, value)}
-                items={countries}
-                style={{
-                  ...pickerSelectStyles,
-                  placeholder: {
-                    borderWidth: 1,
-                    color: 'black',
-                    fontSize: 18,
-                    fontWeight: 'bold',
-                  },
-                  inputIOS: {
-                    borderWidth: 1,
-                    borderColor: '#333',
-                    borderRadius: 10,
-                    padding: 10,
-                    color: 'black',
-                    fontSize: 18,
-                    fontWeight: 'bold',
-                  },
-                  inputAndroid: {
-                    borderWidth: 3,
-                    borderColor: '#000',
-                    borderRadius: 10,
-                    padding: 10,
-                    color: 'black',
-                    fontSize: 18,
-                    fontWeight: 'bold',
-                  },
-                }}
-                value={formikProps.values[question.id]}
-                placeholder={{ label: "Select a country", value: null }}
+          onValueChange={(value) => formikProps.setFieldValue(question.id, value)}
+          items={countries}
+          style={{
+            ...pickerSelectStyles,
+            placeholder: {
+              borderWidth: 1,
+              color: 'black',
+              fontSize: 18,
+              fontWeight: 'bold',
+            },
+            inputIOS: {
+              borderWidth: 1,
+              borderColor: '#333',
+              borderRadius: 10,
+              padding: 10,
+              color: 'black',
+              fontSize: 18,
+              fontWeight: 'bold',
+            },
+            inputAndroid: {
+              borderWidth: 3,
+              borderColor: '#000',
+              borderRadius: 10,
+              padding: 10,
+              color: 'black',
+              fontSize: 18,
+              fontWeight: 'bold',
+            },
+          }}
+          value={formikProps.values[question.id]}
+          placeholder={{ label: "Select a country", value: null }}
               />
             </View>
             <TouchableOpacity
               onPress={() => {
-                if (formikProps.values[question.id]) {
-                  animateTransition('next');
-                }
-                setAnsweredQuestions(answeredQuestions + 1);
+          if (formikProps.values[question.id]) {
+            animateTransition('next');
+          }
+          setAnsweredQuestions(answeredQuestions + 1);
+
               }}
               style={styles.button}
             >
-              <View style={styles.btnleft}>
-                <Text style={styles.text}>Next</Text>
-                <Ionicons name={'arrow-forward-outline'} size={25} />
-              </View>
-            </TouchableOpacity>
+                          <View style={styles.btnleft}>
+            <Text style={styles.text}>Next</Text>
+            <Ionicons
+            name={'arrow-forward-outline'}
+            size={25}
+            
+          />
+            </View>
+         </TouchableOpacity>
           </View>
         );
       default:
@@ -289,27 +560,30 @@ const TypeformClone = () => {
     }
   };
 
+  
   return (
     <Formik
       initialValues={{}}
-      onSubmit={async (values) => {
+      onSubmit={async(values) => {
         const jsonOutput = JSON.stringify(values, null, 2);
         console.log("Form Submission:");
-        console.log("works in typeform", jsonOutput);
+        console.log("works in typeform",jsonOutput);
         try {
           await AsyncStorage.setItem('userinfo', jsonOutput);
-          router.push('/(kyc)/');
+          router.push('/(kyc)/')
+          createProfile();
+
         } catch (error) {
           console.error('Failed to save user info:', error);
-          console.log("not saving it");
+          console.log("not saving it")
         }
       }}
     >
       {(formikProps) => (
         <View style={styles.container}>
           <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${progress}%` }]} />
-          </View>
+        <View style={[styles.progressBar, { width: `${progress}%` }]} />
+      </View>
           <AnimatedView
             style={[
               styles.questionContainer,
@@ -331,21 +605,25 @@ const TypeformClone = () => {
             ) : (
               <View>
                 <Text style={styles.question}>
-                  {"Matching profiles for you are created! \nSign in to look at them!"}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => formikProps.handleSubmit()}
-                  style={styles.button}
-                >
-                  <View style={styles.btnleft}>
-                    <Text style={styles.text}>Sign up</Text>
-                    <Ionicons name={'arrow-forward-outline'} size={25} />
-                  </View>
-                </TouchableOpacity>
+  {"Matching profiles for you are created! \nSign in to look at them!"}
+</Text>
+<TouchableOpacity
+  onPress={() => formikProps.handleSubmit()}
+  style={styles.button}
+>
+<View style={styles.btnleft}>
+            <Text style={styles.text}>Sign up</Text>
+            <Ionicons
+            name={'arrow-forward-outline'}
+            size={25}
+            
+          />
+            </View>
+</TouchableOpacity>
               </View>
             )}
           </AnimatedView>
-          <Image
+          <Image 
             source={require('../assets/images/nou.gif')}
             style={{ width: 200, height: 200, marginTop: -175 }}
           />
@@ -353,9 +631,11 @@ const TypeformClone = () => {
             <TouchableOpacity
               onPress={() => animateTransition('prev')}
               style={styles.prevButton}
-            >
-              <Ionicons name={'arrow-back-outline'} size={25} />
-            </TouchableOpacity>
+            ><Ionicons
+            name={'arrow-back-outline'}
+            size={25}
+            
+          /></TouchableOpacity>
           )}
         </View>
       )}
@@ -364,8 +644,8 @@ const TypeformClone = () => {
 };
 
 const styles = StyleSheet.create({
-  icon: {
-    marginLeft: 10,
+  icon:{
+marginLeft: 10,
   },
   btnleft: {
     flexDirection: 'row',
@@ -373,8 +653,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',         // Vertically centers both icon and text
     marginLeft: 10,
     marginRight: 20,
+
   },
-  text: {
+  text:{
     color: '#000000',
     paddingVertical: 15,
     fontSize: 18,
@@ -421,6 +702,7 @@ const styles = StyleSheet.create({
   },
   question: {
     fontSize: 24,
+ // Change font here
     fontWeight: 'bold',
     textAlign: 'left',
     marginBottom: 20,
@@ -436,12 +718,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     borderColor: '#333',
     padding: 10,
+
     borderRadius: 10,
   },
   button: {
     backgroundColor: '#0000002C',
-    color: '#000000',
+    color: '#000000',         
     borderRadius: 5,
+
     marginTop: 20,
   },
   buttoncheck: {
@@ -455,10 +739,10 @@ const styles = StyleSheet.create({
     top: 20,
     left: 20,
     backgroundColor: '#0000002C',
-    color: '#000000',
+    color: '#000000',         
     borderRadius: 5,
     paddingVertical: 3,
-    paddingHorizontal: 3,
+    paddingHorizontal:3,
     marginTop: 20,
   },
   sliderThumb: {
@@ -471,7 +755,7 @@ const styles = StyleSheet.create({
   },
   sliderValue: {
     textAlign: 'center',
-    fontSize: 18,
+    fontSize: 18,// Change font here
     color: '#000000',
   },
   checkboxContainer: {
@@ -495,6 +779,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: 60,
     width: '100%',
+
   },
 });
 

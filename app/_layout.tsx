@@ -44,7 +44,9 @@ export default function RootLayout() {
         >
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack initialRouteName='index'>
+      {/* <Stack.Screen name="(typeform)" options={{ headerShown: false }} /> */}
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      {/* <Stack.Screen name="(profile)" options={{ headerShown: false }} /> */}
       <Stack.Screen name="(kyc)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />

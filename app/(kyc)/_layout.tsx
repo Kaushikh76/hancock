@@ -123,7 +123,7 @@ const KYCScreen = () => {
   };
 
 const doneVerification = () =>{
-    router.push('/(profile)')
+    router.push('/(tabs)')
 }
 
 

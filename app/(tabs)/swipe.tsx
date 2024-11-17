@@ -10,92 +10,115 @@ if (typeof global.Buffer === 'undefined') {
   global.Buffer = Buffer;
 }
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import TinderCard from "../../components/SwipeCard";
 import { StyleSheet, View, Text } from 'react-native';
-import Ionicons from '@expo/vector-icons/Ionicons';
-import { router } from 'expo-router';
 import { ethers } from 'ethers';
 import { CONTRACT_ADDRESS, ABI, SAPPHIRE_TESTNET } from './configmatch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { wrap } from '@oasisprotocol/sapphire-paratime';
+import SwipeFeedbackCard from '@/components/FeedbackCard';
 
 const SwipeScreen = () => {
-  // State management
   const [userInfo, setUserInfo] = useState('');
   const [provider, setProvider] = useState(null);
   const [contract, setContract] = useState(null);
   const [wallet, setWallet] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isProcessingSwipe, setIsProcessingSwipe] = useState(false);
+  const [cardDatas, setCardData] = useState([]);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [lastSwipedProfile, setLastSwipedProfile] = useState(null);
+  const [lastSwipeDirection, setLastSwipeDirection] = useState(null);
 
-  const cardData = [
-    { id: 1, text: 'JB', image: 'https://noun-api.com/beta/pfp?name=justinbenito', beauty: '50', wealth: '150' },
-    { id: 2, text: 'justinbenito', image: 'https://noun-api.com/beta/pfp?name=jayden', beauty: '150', wealth: '450' },
-    { id: 3, text: 'Justin', image: 'https://noun-api.com/beta/pfp?name=jb', beauty: '500', wealth: '120' },
-    { id: 4, text: 'JB', image: 'https://noun-api.com/beta/pfp?name=bjb', beauty: '150', wealth: '350' },
-  ];
+  useEffect(() => {
+    const initializeData = async () => {
+      await fetchUserData();
+      await fetchUsersData();
+    };
+    initializeData();
+  }, []);
 
-  // Initialize blockchain connection
-  const initializeEthers = async () => {
+  const randInt = (min, max) => {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  };
+
+  const fetchUsersData = async () => {
     try {
-      console.log('Initializing blockchain connection...');
-      
       const baseProvider = new ethers.JsonRpcProvider(SAPPHIRE_TESTNET.networkParams.rpcUrls[0]);
       const wrappedProvider = wrap(baseProvider);
       setProvider(wrappedProvider);
       
-      console.log('Provider initialized successfully');
-
-      // Get private key from storage
       const privateKey = await AsyncStorage.getItem('wallet_private_key');
+      
       if (!privateKey) {
-        throw new Error('No private key found in storage');
+        console.log('Wallet Setup Required', 'Please set up your wallet first by importing your private key');
+        return;
       }
 
-      // Create wrapped wallet
       const baseWallet = new ethers.Wallet(privateKey, wrappedProvider);
       const wrappedWallet = wrap(baseWallet);
-      console.log('Wallet initialized with address:', await wrappedWallet.getAddress());
       setWallet(wrappedWallet);
 
-      // Initialize contract
       const wrappedContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wrappedWallet);
-      console.log('Contract initialized at address:', CONTRACT_ADDRESS);
       setContract(wrappedContract);
-      
       setIsInitialized(true);
-      console.log('Blockchain initialization complete');
+
+      const numProfiles = await wrappedContract.getTotalProfiles();
+      const arrayOfProfiles = await wrappedContract.getActiveProfiles(0, numProfiles);
+
+      const profilePromises = arrayOfProfiles.map(async (profile, index) => {
+        const profileInfo = await wrappedContract.getPublicProfileInfo(profile);
+        const parsedUserInfo = userInfo ? JSON.parse(userInfo) : { name: 'default' };
+        
+        return {
+          id: index + 1,
+          text: profile,
+          image: `https://noun-api.com/beta/pfp?name=${parsedUserInfo.name}`,
+          beauty: randInt(0, 100).toString(),
+          wealth: profileInfo.wealthMetric.toString().slice(0, 2),
+        };
+      });
+
+      const profiles = await Promise.all(profilePromises);
+      setCardData(profiles);
     } catch (error) {
-      console.error('Blockchain initialization failed:', error);
-      setIsInitialized(false);
+      console.error('Error fetching users data:', error);
     }
   };
 
-  // Fetch user data
   const fetchUserData = async () => {
     try {
       const storedUserInfo = await AsyncStorage.getItem('userinfo');
-      console.log('Fetched user info:', storedUserInfo);
-      setUserInfo(storedUserInfo);
+      setUserInfo(storedUserInfo || '');
     } catch (error) {
       console.error('Error fetching user data:', error);
     }
   };
 
-  useEffect(() => {
-    console.log('Component mounted, initializing...');
-    fetchUserData();
-    initializeEthers();
-  }, []);
+  const handleSwipeLeft = async (item) => {
+    if (!isInitialized || isProcessingSwipe) {
+      console.log('Cannot process swipe: ', !isInitialized ? 'blockchain not initialized' : 'previous swipe in progress');
+      return;
+    }
 
-  const handleSwipeLeft = (item) => {
-    // const profile = cardData[item - 1];
-    // console.log('Swiped left on profile:', {
-    //   username: profile.text,
-    //   beauty: profile.beauty,
-    //   wealth: profile.wealth
-    // });
+    if (item <= 0 || item > cardDatas.length) return;
+
+    const profile = cardDatas[item - 1];
+    setLastSwipedProfile(profile);
+    setLastSwipeDirection('left');
+    setFeedbackVisible(true);
+    setIsProcessingSwipe(true);
+
+    try {
+      const tx = await contract.unlikeProfile(profile.text, { gasLimit: 500000 });
+      await tx.wait();
+      console.log('Successfully disliked profile:', profile.text);
+    } catch (error) {
+      console.error('Failed to dislike profile:', error);
+    } finally {
+      setIsProcessingSwipe(false);
+    }
   };
 
   const handleSwipeRight = async (item) => {
@@ -104,63 +127,53 @@ const SwipeScreen = () => {
       return;
     }
 
-    if(item > 0 ){
-    const profile = cardData[item - 1];
-    console.log('Processing right swipe for profile:', {
-      username: profile.text,
-      beauty: profile.beauty,
-      wealth: profile.wealth
-    });
+    if (item <= 0 || item > cardDatas.length) return;
 
+    const profile = cardDatas[item - 1];
+    setLastSwipedProfile(profile);
+    setLastSwipeDirection('right');
+    setFeedbackVisible(true);
     setIsProcessingSwipe(true);
 
     try {
-      console.log('Initiating contract interaction to like profile:', profile.text);
-      
-      const tx = await contract.likeProfile(
-        profile.text,
-        { 
-          gasLimit: 500000,
-        }
-      );
-      
-      console.log('Transaction submitted:', tx.hash);
-      
-      const receipt = await tx.wait();
-      console.log(tx);
-      console.log('Transaction confirmed:', {
-        blockNumber: receipt.blockNumber,
-        gasUsed: receipt.gasUsed.toString(),
-        status: receipt.status
-      });
-
+      const tx = await contract.likeProfile(profile.text, { gasLimit: 500000 });
+      await tx.wait();
       console.log('Successfully liked profile:', profile.text);
 
-      const tx2=await contract.isMatch('0x9629d2b146F44b124B0794649DDf69662B7a306D','0xc380c0cE9c8d317c35d64765E39E74524ea8f1aa')
-      console.log("Is they a match: ",tx2);
-
+      const isMatch = await contract.isMatch(
+        '0x9629d2b146F44b124B0794649DDf69662B7a306D',
+        '0xc380c0cE9c8d317c35d64765E39E74524ea8f1aa'
+      );
+      console.log("Is there a match:", isMatch);
     } catch (error) {
-      console.error('Failed to like profile:', {
-        profile: profile.text,
-        error: error.message
-      });
+      console.error('Failed to like profile:', error);
     } finally {
       setIsProcessingSwipe(false);
     }
-  }
-
   };
 
   return (
     <View style={styles.container}>
-      {!isInitialized && (
-        <Text style={styles.warning}>Initializing blockchain connection...</Text>
+      {cardDatas.length > 0 ? (
+        <>
+          {!isInitialized && (
+            <Text style={styles.warning}>Initializing blockchain connection...</Text>
+          )}
+          <TinderCard
+            data={cardDatas}
+            onSwipeLeft={handleSwipeLeft}
+            onSwipeRight={handleSwipeRight}
+          />
+          <SwipeFeedbackCard
+            isVisible={feedbackVisible}
+            onClose={() => setFeedbackVisible(false)}
+            swipedProfile={lastSwipedProfile}
+            swipeDirection={lastSwipeDirection}
+          />
+        </>
+      ) : (
+        <Text style={styles.warning}>No profiles found</Text>
       )}
-      <TinderCard
-        data={cardData}
-        onSwipeLeft={handleSwipeLeft}
-        onSwipeRight={handleSwipeRight}
-      />
     </View>
   );
 };
